@@ -68,8 +68,8 @@ services:
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "${FRONTEND_PORT:-3000}:80"
+    expose:
+      - "80"
     depends_on:
       backend:
         condition: service_started
