@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function UploadForm({ onCreated, apiBase }) {
+export default function UploadForm({ apiBase, onCreated }) {
   const [video, setVideo] = useState(null)
   const [voice, setVoice] = useState(null)
   const [subtitle, setSubtitle] = useState(null)
@@ -8,97 +8,182 @@ export default function UploadForm({ onCreated, apiBase }) {
   const [script, setScript] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
-  async function submit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
+
     setError('')
+    setSuccess('')
 
     if (!video || !voice) {
-      setError('Envie pelo menos o vídeo base e o áudio de narração.')
+      setError('Selecione vídeo e narração.')
       return
     }
 
-    const form = new FormData()
-    form.append('video', video)
-    form.append('voice', voice)
-    if (subtitle) form.append('subtitle', subtitle)
-    if (music) form.append('music', music)
-    if (script.trim()) form.append('script', script)
-
     try {
       setLoading(true)
+
+      const form = new FormData()
+
+      form.append('video', video)
+      form.append('voice', voice)
+
+      if (subtitle) {
+        form.append('subtitle', subtitle)
+      }
+
+      if (music) {
+        form.append('music', music)
+      }
+
+      if (script.trim()) {
+        form.append('script', script)
+      }
+
       const res = await fetch(`${apiBase}/upload`, {
         method: 'POST',
         body: form,
       })
 
-      const data = await res.json()
-
       if (!res.ok) {
-        throw new Error(data.detail || 'Erro ao enviar arquivos.')
+        throw new Error('Falha no upload.')
       }
 
+      const data = await res.json()
+
+      setSuccess('Job criado com sucesso.')
+
       onCreated(data.job_id)
+
       setVideo(null)
       setVoice(null)
       setSubtitle(null)
       setMusic(null)
       setScript('')
-      e.target.reset()
+
+      document.getElementById('video-input').value = ''
+      document.getElementById('voice-input').value = ''
+      document.getElementById('subtitle-input').value = ''
+      document.getElementById('music-input').value = ''
+
     } catch (err) {
-      setError(err.message || 'Erro inesperado no upload.')
+      setError(err.message || 'Erro inesperado.')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <form onSubmit={submit} className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl space-y-5">
-      <div>
-        <h2 className="text-xl font-bold">Novo vídeo</h2>
-        <p className="text-sm text-slate-400">Envie vídeo, narração, legenda e música opcional.</p>
+    <div>
+      <div className="mb-6">
+        <h2 className="text-2xl font-black">
+          Novo Projeto
+        </h2>
+
+        <p className="text-slate-400 text-sm mt-2">
+          Envie os arquivos necessários para gerar o vídeo final.
+        </p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <label className="block">
-          <span className="text-sm font-medium">Vídeo base *</span>
-          <input className="mt-2 block w-full text-sm" type="file" accept=".mp4,.mov,.mkv,.webm" onChange={(e) => setVideo(e.target.files[0])} />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium">Narração *</span>
-          <input className="mt-2 block w-full text-sm" type="file" accept=".mp3,.wav,.m4a,.aac" onChange={(e) => setVoice(e.target.files[0])} />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium">Legenda opcional</span>
-          <input className="mt-2 block w-full text-sm" type="file" accept=".srt,.ass" onChange={(e) => setSubtitle(e.target.files[0])} />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium">Música de fundo opcional</span>
-          <input className="mt-2 block w-full text-sm" type="file" accept=".mp3,.wav,.m4a,.aac" onChange={(e) => setMusic(e.target.files[0])} />
-        </label>
-      </div>
-
-      <label className="block">
-        <span className="text-sm font-medium">Roteiro opcional</span>
-        <textarea
-          className="mt-2 w-full rounded-xl bg-slate-800 border border-slate-700 p-3 text-sm min-h-28"
-          value={script}
-          onChange={(e) => setScript(e.target.value)}
-          placeholder="Cole aqui o roteiro, observações ou descrição do vídeo..."
-        />
-      </label>
-
-      {error && <div className="rounded-xl bg-red-950 border border-red-700 p-3 text-sm text-red-200">{error}</div>}
-
-      <button
-        disabled={loading}
-        className="w-full md:w-auto px-6 py-3 rounded-xl bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400 disabled:opacity-60"
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-5"
       >
-        {loading ? 'Enviando...' : 'Gerar vídeo'}
-      </button>
-    </form>
+
+        <div>
+          <label className="block mb-2 text-sm font-semibold text-slate-300">
+            Vídeo Base *
+          </label>
+
+          <input
+            id="video-input"
+            type="file"
+            accept="video/*"
+            onChange={(e) => setVideo(e.target.files[0])}
+            className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-sm font-semibold text-slate-300">
+            Narração *
+          </label>
+
+          <input
+            id="voice-input"
+            type="file"
+            accept="audio/*"
+            onChange={(e) => setVoice(e.target.files[0])}
+            className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-sm font-semibold text-slate-300">
+            Legenda
+          </label>
+
+          <input
+            id="subtitle-input"
+            type="file"
+            accept=".srt,.ass"
+            onChange={(e) => setSubtitle(e.target.files[0])}
+            className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-sm font-semibold text-slate-300">
+            Música de Fundo
+          </label>
+
+          <input
+            id="music-input"
+            type="file"
+            accept="audio/*"
+            onChange={(e) => setMusic(e.target.files[0])}
+            className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-sm font-semibold text-slate-300">
+            Roteiro / Observações
+          </label>
+
+          <textarea
+            rows="5"
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+            placeholder="Observações opcionais..."
+            className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm outline-none focus:border-indigo-500"
+          />
+        </div>
+
+        {error && (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            {success}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-2xl bg-indigo-600 px-6 py-4 text-sm font-bold transition hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {loading
+            ? 'Processando...'
+            : 'Gerar Vídeo'}
+        </button>
+
+      </form>
+    </div>
   )
 }
