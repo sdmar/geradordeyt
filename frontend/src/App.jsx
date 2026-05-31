@@ -4,7 +4,7 @@ import JobList from './components/JobList.jsx'
 
 export default function App() {
   const apiBase = useMemo(() => {
-    return import.meta.env.VITE_API_BASE_URL || '/api'
+    return 'https://api-geradoryt.sdmar.space'
   }, [])
 
   const [jobIds, setJobIds] = useState(() => {
