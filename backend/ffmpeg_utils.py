@@ -131,8 +131,6 @@ def build_ffmpeg_command(
         "-b:a",
         "192k",
 
-        "-shortest",
-
         "-movflags",
         "+faststart",
 
