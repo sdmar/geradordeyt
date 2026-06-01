@@ -72,6 +72,9 @@ services:
       - "3000:80"
     labels:
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.frontend-upload-buffering.buffering.maxRequestBodyBytes=2147483648"
+      - "traefik.http.middlewares.frontend-upload-buffering.buffering.memRequestBodyBytes=10485760"
+      - "traefik.http.routers.https-0-vb6bk0cq7yzax4ve5fb7552o-frontend.middlewares=frontend-upload-buffering,gzip"
     depends_on:
       backend:
         condition: service_started
