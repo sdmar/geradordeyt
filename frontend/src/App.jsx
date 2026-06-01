@@ -4,7 +4,7 @@ import JobList from './components/JobList.jsx'
 
 export default function App() {
   const apiBase = useMemo(() => {
-    return 'https://api-geradoryt.sdmar.space'
+    return '/api'
   }, [])
 
   const [jobIds, setJobIds] = useState(() => {
