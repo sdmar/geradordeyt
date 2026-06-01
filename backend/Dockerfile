@@ -33,7 +33,7 @@ WORKDIR /app
 COPY --from=builder /install/deps /install/deps
 COPY . /app
 
-RUN mkdir -p /data/jobs && chown -R appuser:appuser /app /data
+RUN mkdir -p /data/jobs /data/chunks && chown -R appuser:appuser /app /data
 
 USER appuser
 
