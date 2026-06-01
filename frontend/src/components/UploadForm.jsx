@@ -21,13 +21,21 @@ export default function UploadForm({ apiBase, onCreated }) {
     })
 
     if (!res.ok) {
-      let message = 'Falha na requisição.'
+      let message = `Falha na requisição ${path}. Status: ${res.status}`
+      const contentType = res.headers.get('content-type') || ''
 
       try {
-        const data = await res.json()
-        message = data.detail || message
+        if (contentType.includes('application/json')) {
+          const data = await res.json()
+          message = data.detail || data.message || message
+        } else {
+          const text = await res.text()
+          if (text) {
+            message = text
+          }
+        }
       } catch {
-        message = await res.text()
+        // mantém a mensagem padrão
       }
 
       throw new Error(message)
