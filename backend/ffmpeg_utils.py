@@ -87,7 +87,7 @@ def build_ffmpeg_command(
 
         # Mixagem melhor para vídeos longos
         filter_parts.append(
-            "[voice][music]amix=inputs=2:duration=longest:normalize=0[aout]"
+            "[voice][music]amix=inputs=2:duration=first:normalize=0[aout]"
         )
 
     else:
