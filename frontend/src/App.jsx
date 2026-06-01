@@ -31,6 +31,7 @@ export default function App() {
 
     async function fetchJobs() {
       const results = []
+      const validJobIds = []
 
       for (const id of jobIds) {
         try {
@@ -38,6 +39,15 @@ export default function App() {
 
           if (res.ok) {
             results.push(await res.json())
+            validJobIds.push(id)
+          } else if (res.status !== 404) {
+            results.push({
+              job_id: id,
+              status: 'error',
+              progress: 100,
+              message: 'Erro ao consultar backend.',
+            })
+            validJobIds.push(id)
           }
         } catch {
           results.push({
@@ -46,11 +56,16 @@ export default function App() {
             progress: 100,
             message: 'Erro ao consultar backend.',
           })
+          validJobIds.push(id)
         }
       }
 
       if (!cancelled) {
         setJobs(results)
+
+        if (validJobIds.length !== jobIds.length) {
+          setJobIds(validJobIds)
+        }
       }
     }
 
@@ -88,7 +103,6 @@ export default function App() {
       <div className="absolute inset-0 bg-gradient-to-b from-indigo-950/30 via-transparent to-transparent pointer-events-none" />
 
       <section className="relative max-w-7xl mx-auto px-4 py-10 md:py-14">
-
         <header className="mb-10">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm text-indigo-300 mb-5">
             FFmpeg • FastAPI • Docker • Coolify
@@ -109,7 +123,6 @@ export default function App() {
         </header>
 
         <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-8">
-
           <div className="space-y-6">
             <div className="rounded-3xl border border-slate-800 bg-slate-950/70 backdrop-blur-xl p-6 shadow-2xl shadow-black/20">
               <UploadForm
@@ -157,7 +170,6 @@ export default function App() {
               onDelete={handleDelete}
             />
           </div>
-
         </div>
       </section>
     </main>
