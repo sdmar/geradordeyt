@@ -277,9 +277,30 @@ async def upload_finish(
     subtitle_upload_id: Optional[str] = Form(None),
     music_upload_id: Optional[str] = Form(None),
     script: Optional[str] = Form(None),
+    video_upload_ids: Optional[str] = Form(None),
 ):
     video_meta = read_upload_meta(video_upload_id)
     voice_meta = read_upload_meta(voice_upload_id)
+
+    parsed_video_upload_ids = [video_upload_id]
+
+    if video_upload_ids:
+        try:
+            parsed_video_upload_ids = json.loads(video_upload_ids)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="video_upload_ids inválido",
+            )
+
+        if (
+            not isinstance(parsed_video_upload_ids, list)
+            or len(parsed_video_upload_ids) == 0
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="video_upload_ids inválido",
+            )
 
     if video_meta.get("file_type") != "video":
         raise HTTPException(status_code=400, detail="video_upload_id não é vídeo")
@@ -306,26 +327,47 @@ async def upload_finish(
 
     files = {
         "video": None,
+        "videos": [],
         "voice": None,
         "subtitle": None,
         "music": None,
     }
 
     upload_ids_to_cleanup = [
-        video_upload_id,
+        *parsed_video_upload_ids,
         voice_upload_id,
         subtitle_upload_id,
         music_upload_id,
     ]
 
     try:
-        video_name = "video." + ext(video_meta["filename"])
         voice_name = "voice." + ext(voice_meta["filename"])
 
-        await assemble_chunks(video_upload_id, job_dir / video_name)
-        await assemble_chunks(voice_upload_id, job_dir / voice_name)
+        for index, current_upload_id in enumerate(parsed_video_upload_ids, start=1):
+            current_meta = read_upload_meta(current_upload_id)
 
-        files["video"] = video_name
+            if current_meta.get("file_type") != "video":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Upload {index} não é vídeo",
+                )
+
+            scene_name = f"scene_{index:03d}." + ext(current_meta["filename"])
+
+            await assemble_chunks(
+                current_upload_id,
+                job_dir / scene_name,
+            )
+
+            files["videos"].append(scene_name)
+
+        files["video"] = files["videos"][0]
+
+        await assemble_chunks(
+            voice_upload_id,
+            job_dir / voice_name,
+        )
+
         files["voice"] = voice_name
 
         if subtitle_meta and subtitle_upload_id:
@@ -410,6 +452,7 @@ async def upload(
         await save_upload_stream(voice, job_dir / voice_name, settings.max_file_size)
 
         files["video"] = video_name
+        files["videos"] = [video_name]
         files["voice"] = voice_name
 
         if subtitle and subtitle.filename:

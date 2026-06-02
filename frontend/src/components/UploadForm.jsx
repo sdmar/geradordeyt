@@ -3,7 +3,7 @@ import { useState } from 'react'
 const CHUNK_SIZE_FALLBACK = 10 * 1024 * 1024
 
 export default function UploadForm({ apiBase, onCreated }) {
-  const [video, setVideo] = useState(null)
+  const [videos, setVideos] = useState([])
   const [voice, setVoice] = useState(null)
   const [subtitle, setSubtitle] = useState(null)
   const [music, setMusic] = useState(null)
@@ -89,8 +89,8 @@ export default function UploadForm({ apiBase, onCreated }) {
     setUploadProgress(0)
     setUploadMessage('')
 
-    if (!video || !voice) {
-      setError('Selecione vídeo e narração.')
+    if (!videos.length || !voice) {
+      setError('Selecione pelo menos uma cena/vídeo e a narração.')
       return
     }
 
@@ -98,7 +98,7 @@ export default function UploadForm({ apiBase, onCreated }) {
       setLoading(true)
 
       let completedFiles = 0
-      const totalFiles = [video, voice, subtitle, music].filter(Boolean).length
+      const totalFiles = videos.length + [voice, subtitle, music].filter(Boolean).length
 
       function updateGlobalProgress(currentFilePercent) {
         const global = Math.round(
@@ -108,10 +108,15 @@ export default function UploadForm({ apiBase, onCreated }) {
         setUploadProgress(global)
       }
 
-      setUploadMessage('Enviando vídeo base em partes...')
-      const videoUploadId = await uploadFileInChunks(video, 'video', updateGlobalProgress)
-      completedFiles += 1
-      updateGlobalProgress(0)
+      const videoUploadIds = []
+
+      for (let i = 0; i < videos.length; i += 1) {
+        setUploadMessage(`Enviando cena ${i + 1} de ${videos.length} em partes...`)
+        const uploadId = await uploadFileInChunks(videos[i], 'video', updateGlobalProgress)
+        videoUploadIds.push(uploadId)
+        completedFiles += 1
+        updateGlobalProgress(0)
+      }
 
       setUploadMessage('Enviando narração em partes...')
       const voiceUploadId = await uploadFileInChunks(voice, 'voice', updateGlobalProgress)
@@ -137,7 +142,13 @@ export default function UploadForm({ apiBase, onCreated }) {
       setUploadMessage('Montando arquivos no servidor e criando job...')
 
       const finishForm = new FormData()
-      finishForm.append('video_upload_id', videoUploadId)
+
+      // Compatibilidade com backend atual: envia a primeira cena como video_upload_id
+      finishForm.append('video_upload_id', videoUploadIds[0])
+
+      // Novo campo para backend com suporte a múltiplas cenas
+      finishForm.append('video_upload_ids', JSON.stringify(videoUploadIds))
+
       finishForm.append('voice_upload_id', voiceUploadId)
 
       if (subtitleUploadId) {
@@ -160,7 +171,7 @@ export default function UploadForm({ apiBase, onCreated }) {
 
       onCreated(data.job_id)
 
-      setVideo(null)
+      setVideos([])
       setVoice(null)
       setSubtitle(null)
       setMusic(null)
@@ -195,16 +206,23 @@ export default function UploadForm({ apiBase, onCreated }) {
       >
         <div>
           <label className="block mb-2 text-sm font-semibold text-slate-300">
-            Vídeo Base *
+            Vídeos / Cenas *
           </label>
 
           <input
             id="video-input"
             type="file"
             accept="video/*"
-            onChange={(e) => setVideo(e.target.files[0] || null)}
+            multiple
+            onChange={(e) => setVideos(Array.from(e.target.files || []))}
             className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
           />
+
+          {videos.length > 0 && (
+            <div className="mt-2 text-xs text-slate-400">
+              {videos.length} cena(s) selecionada(s).
+            </div>
+          )}
         </div>
 
         <div>
