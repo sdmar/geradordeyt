@@ -10,6 +10,15 @@ def safe_path(path: Path) -> str:
     return str(path.resolve())
 
 
+def escape_subtitle_path(path: Path) -> str:
+    return (
+        safe_path(path)
+        .replace("\\", "\\\\")
+        .replace(":", "\\:")
+        .replace("'", "\\'")
+    )
+
+
 def update_job(job_dir: Path, **updates):
     meta_path = job_dir / "job.json"
     data = {}
@@ -51,33 +60,43 @@ def get_media_duration(path: Path) -> float:
 
 
 def build_ffmpeg_command(
-    video_path: Path,
+    video_paths: list[Path],
     voice_path: Path,
     output_path: Path,
     subtitle_path: Optional[Path] = None,
     music_path: Optional[Path] = None,
 ) -> list[str]:
 
+    if not video_paths:
+        raise RuntimeError("Nenhuma cena encontrada para renderizar")
+
     settings = get_settings()
     voice_duration = get_media_duration(voice_path)
+    scene_duration = voice_duration / len(video_paths)
 
     cmd = [
         "ffmpeg",
         "-y",
         "-hide_banner",
+    ]
 
-        # O vídeo repete se for menor que a narração
-        "-stream_loop",
-        "-1",
-        "-i",
-        safe_path(video_path),
+    for video_path in video_paths:
+        cmd += [
+            "-stream_loop",
+            "-1",
+            "-i",
+            safe_path(video_path),
+        ]
 
-        # Narração é a duração principal
+    voice_input_index = len(video_paths)
+
+    cmd += [
         "-i",
         safe_path(voice_path),
     ]
 
     has_music = music_path is not None
+    music_input_index = voice_input_index + 1
 
     if has_music:
         cmd += [
@@ -87,34 +106,45 @@ def build_ffmpeg_command(
             safe_path(music_path),
         ]
 
-    video_filter = (
-        "scale=1920:1080:force_original_aspect_ratio=decrease,"
-        "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
-        "setsar=1,"
-        "fps=30"
+    filter_parts = []
+
+    for index in range(len(video_paths)):
+        filter_parts.append(
+            f"[{index}:v]"
+            f"trim=duration={scene_duration},"
+            f"setpts=PTS-STARTPTS,"
+            f"scale=1920:1080:force_original_aspect_ratio=decrease,"
+            f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
+            f"setsar=1,"
+            f"fps=30"
+            f"[v{index}]"
+        )
+
+    concat_inputs = "".join(
+        f"[v{index}]" for index in range(len(video_paths))
+    )
+
+    filter_parts.append(
+        f"{concat_inputs}concat=n={len(video_paths)}:v=1:a=0[vcat]"
     )
 
     if subtitle_path:
-        subtitle_escaped = (
-            safe_path(subtitle_path)
-            .replace("\\", "\\\\")
-            .replace(":", "\\:")
-            .replace("'", "\\'")
+        subtitle_escaped = escape_subtitle_path(subtitle_path)
+        filter_parts.append(
+            f"[vcat]subtitles='{subtitle_escaped}'[vout]"
         )
-
-        video_filter += f",subtitles='{subtitle_escaped}'"
-
-    filter_parts = [
-        f"[0:v]{video_filter}[vout]"
-    ]
+    else:
+        filter_parts.append(
+            "[vcat]copy[vout]"
+        )
 
     if has_music:
         filter_parts.append(
-            f"[1:a]volume={settings.voice_volume}[voice]"
+            f"[{voice_input_index}:a]volume={settings.voice_volume}[voice]"
         )
 
         filter_parts.append(
-            "[2:a]volume=0.18[music]"
+            f"[{music_input_index}:a]volume=0.18[music]"
         )
 
         filter_parts.append(
@@ -122,7 +152,7 @@ def build_ffmpeg_command(
         )
     else:
         filter_parts.append(
-            f"[1:a]volume={settings.voice_volume}[aout]"
+            f"[{voice_input_index}:a]volume={settings.voice_volume}[aout]"
         )
 
     filter_complex = ";".join(filter_parts)
@@ -137,7 +167,6 @@ def build_ffmpeg_command(
         "-map",
         "[aout]",
 
-        # Corta tudo exatamente na duração da narração
         "-t",
         str(voice_duration),
 
@@ -179,18 +208,22 @@ def run_ffmpeg(job_dir: Path):
         )
     )
 
-    video_path = job_dir / meta["files"]["video"]
-    voice_path = job_dir / meta["files"]["voice"]
+    files = meta["files"]
+
+    video_files = files.get("videos") or [files["video"]]
+    video_paths = [job_dir / video_file for video_file in video_files]
+
+    voice_path = job_dir / files["voice"]
 
     subtitle_path = (
-        job_dir / meta["files"]["subtitle"]
-        if meta["files"].get("subtitle")
+        job_dir / files["subtitle"]
+        if files.get("subtitle")
         else None
     )
 
     music_path = (
-        job_dir / meta["files"]["music"]
-        if meta["files"].get("music")
+        job_dir / files["music"]
+        if files.get("music")
         else None
     )
 
@@ -204,6 +237,7 @@ def run_ffmpeg(job_dir: Path):
     )
 
     voice_duration = get_media_duration(voice_path)
+    scene_duration = voice_duration / len(video_paths)
 
     update_job(
         job_dir,
@@ -211,10 +245,12 @@ def run_ffmpeg(job_dir: Path):
         progress=20,
         message=f"Narração detectada: {voice_duration:.2f} segundos",
         voice_duration=voice_duration,
+        scene_count=len(video_paths),
+        scene_duration=scene_duration,
     )
 
     cmd = build_ffmpeg_command(
-        video_path=video_path,
+        video_paths=video_paths,
         voice_path=voice_path,
         subtitle_path=subtitle_path,
         music_path=music_path,
@@ -225,7 +261,7 @@ def run_ffmpeg(job_dir: Path):
         job_dir,
         status="processing",
         progress=30,
-        message="Renderizando vídeo sincronizado com a narração",
+        message="Renderizando vídeo com múltiplas cenas",
         ffmpeg_command=" ".join(cmd),
     )
 
@@ -257,6 +293,8 @@ def run_ffmpeg(job_dir: Path):
         output_file="output.mp4",
         download_url=f"/download/{meta['job_id']}",
         final_duration=voice_duration,
+        scene_count=len(video_paths),
+        scene_duration=scene_duration,
     )
 
     return str(output_path)
