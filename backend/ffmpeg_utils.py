@@ -101,7 +101,6 @@ def build_video_filter(
     fade: bool,
 ) -> str:
     filters = [
-        f"[{input_index}:v]",
         f"trim=duration={scene_duration}",
         "setpts=PTS-STARTPTS",
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
@@ -122,7 +121,7 @@ def build_video_filter(
         filters.append("fade=t=in:st=0:d=0.25")
         filters.append(f"fade=t=out:st={fade_out_start}:d=0.35")
 
-    return ",".join(filters) + f"[{output_label}]"
+    return f"[{input_index}:v]" + ",".join(filters) + f"[{output_label}]"
 
 
 def build_ffmpeg_command(
