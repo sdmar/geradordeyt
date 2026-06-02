@@ -278,11 +278,29 @@ async def upload_finish(
     music_upload_id: Optional[str] = Form(None),
     script: Optional[str] = Form(None),
     video_upload_ids: Optional[str] = Form(None),
+    options: Optional[str] = Form(None),
 ):
     video_meta = read_upload_meta(video_upload_id)
     voice_meta = read_upload_meta(voice_upload_id)
 
     parsed_video_upload_ids = [video_upload_id]
+
+    parsed_options = {
+        "format": "youtube",
+        "auto_zoom": False,
+        "fade": False,
+        "music_volume": 0.18,
+        "subtitle_enabled": True,
+    }
+
+    if options:
+        try:
+            parsed_options.update(json.loads(options))
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="options inválido",
+            )
 
     if video_upload_ids:
         try:
@@ -387,6 +405,7 @@ async def upload_finish(
             "job_id": job_id,
             "status": "pending",
             "progress": 0,
+            "options": parsed_options,
             "message": "Upload completo. Job aguardando processamento",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "files": files,
