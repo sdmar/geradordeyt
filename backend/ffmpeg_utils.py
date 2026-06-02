@@ -59,18 +59,89 @@ def get_media_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
+def normalize_options(options: Optional[dict]) -> dict:
+    if not isinstance(options, dict):
+        options = {}
+
+    format_value = options.get("format", "youtube")
+
+    if format_value not in {"youtube", "shorts"}:
+        format_value = "youtube"
+
+    try:
+        music_volume = float(options.get("music_volume", 0.18))
+    except (TypeError, ValueError):
+        music_volume = 0.18
+
+    music_volume = max(0.0, min(music_volume, 1.0))
+
+    return {
+        "format": format_value,
+        "auto_zoom": bool(options.get("auto_zoom", False)),
+        "fade": bool(options.get("fade", False)),
+        "music_volume": music_volume,
+        "subtitle_enabled": bool(options.get("subtitle_enabled", True)),
+    }
+
+
+def get_canvas_size(format_value: str) -> tuple[int, int]:
+    if format_value == "shorts":
+        return 1080, 1920
+
+    return 1920, 1080
+
+
+def build_video_filter(
+    input_index: int,
+    output_label: str,
+    scene_duration: float,
+    width: int,
+    height: int,
+    auto_zoom: bool,
+    fade: bool,
+) -> str:
+    filters = [
+        f"[{input_index}:v]",
+        f"trim=duration={scene_duration}",
+        "setpts=PTS-STARTPTS",
+        f"scale={width}:{height}:force_original_aspect_ratio=increase",
+        f"crop={width}:{height}",
+        "setsar=1",
+        "fps=30",
+    ]
+
+    if auto_zoom:
+        filters.extend([
+            "scale=8000:-1",
+            f"zoompan=z='min(zoom+0.0008,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30",
+            "setsar=1",
+        ])
+
+    if fade and scene_duration > 1.0:
+        fade_out_start = max(scene_duration - 0.35, 0)
+        filters.append("fade=t=in:st=0:d=0.25")
+        filters.append(f"fade=t=out:st={fade_out_start}:d=0.35")
+
+    return ",".join(filters) + f"[{output_label}]"
+
+
 def build_ffmpeg_command(
     video_paths: list[Path],
     voice_path: Path,
     output_path: Path,
     subtitle_path: Optional[Path] = None,
     music_path: Optional[Path] = None,
+    options: Optional[dict] = None,
 ) -> list[str]:
 
     if not video_paths:
         raise RuntimeError("Nenhuma cena encontrada para renderizar")
 
     settings = get_settings()
+    render_options = normalize_options(options)
+
+    width, height = get_canvas_size(render_options["format"])
+
     voice_duration = get_media_duration(voice_path)
     scene_duration = voice_duration / len(video_paths)
 
@@ -110,14 +181,15 @@ def build_ffmpeg_command(
 
     for index in range(len(video_paths)):
         filter_parts.append(
-            f"[{index}:v]"
-            f"trim=duration={scene_duration},"
-            f"setpts=PTS-STARTPTS,"
-            f"scale=1920:1080:force_original_aspect_ratio=decrease,"
-            f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,"
-            f"fps=30"
-            f"[v{index}]"
+            build_video_filter(
+                input_index=index,
+                output_label=f"v{index}",
+                scene_duration=scene_duration,
+                width=width,
+                height=height,
+                auto_zoom=render_options["auto_zoom"],
+                fade=render_options["fade"],
+            )
         )
 
     concat_inputs = "".join(
@@ -128,14 +200,14 @@ def build_ffmpeg_command(
         f"{concat_inputs}concat=n={len(video_paths)}:v=1:a=0[vcat]"
     )
 
-    if subtitle_path:
+    if subtitle_path and render_options["subtitle_enabled"]:
         subtitle_escaped = escape_subtitle_path(subtitle_path)
         filter_parts.append(
             f"[vcat]subtitles='{subtitle_escaped}'[vout]"
         )
     else:
         filter_parts.append(
-            "[vcat]copy[vout]"
+            "[vcat]null[vout]"
         )
 
     if has_music:
@@ -144,7 +216,7 @@ def build_ffmpeg_command(
         )
 
         filter_parts.append(
-            f"[{music_input_index}:a]volume=0.18[music]"
+            f"[{music_input_index}:a]volume={render_options['music_volume']}[music]"
         )
 
         filter_parts.append(
@@ -209,6 +281,7 @@ def run_ffmpeg(job_dir: Path):
     )
 
     files = meta["files"]
+    options = normalize_options(meta.get("options", {}))
 
     video_files = files.get("videos") or [files["video"]]
     video_paths = [job_dir / video_file for video_file in video_files]
@@ -234,6 +307,7 @@ def run_ffmpeg(job_dir: Path):
         status="processing",
         progress=10,
         message="Verificando duração da narração",
+        render_options=options,
     )
 
     voice_duration = get_media_duration(voice_path)
@@ -247,6 +321,7 @@ def run_ffmpeg(job_dir: Path):
         voice_duration=voice_duration,
         scene_count=len(video_paths),
         scene_duration=scene_duration,
+        render_format=options["format"],
     )
 
     cmd = build_ffmpeg_command(
@@ -255,13 +330,14 @@ def run_ffmpeg(job_dir: Path):
         subtitle_path=subtitle_path,
         music_path=music_path,
         output_path=output_path,
+        options=options,
     )
 
     update_job(
         job_dir,
         status="processing",
         progress=30,
-        message="Renderizando vídeo com múltiplas cenas",
+        message="Renderizando vídeo com configurações personalizadas",
         ffmpeg_command=" ".join(cmd),
     )
 
@@ -295,6 +371,7 @@ def run_ffmpeg(job_dir: Path):
         final_duration=voice_duration,
         scene_count=len(video_paths),
         scene_duration=scene_duration,
+        render_options=options,
     )
 
     return str(output_path)

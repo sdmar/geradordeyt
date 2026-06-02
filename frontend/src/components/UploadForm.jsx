@@ -8,6 +8,13 @@ export default function UploadForm({ apiBase, onCreated }) {
   const [subtitle, setSubtitle] = useState(null)
   const [music, setMusic] = useState(null)
   const [script, setScript] = useState('')
+
+  const [format, setFormat] = useState('youtube')
+  const [autoZoom, setAutoZoom] = useState(true)
+  const [fade, setFade] = useState(true)
+  const [musicVolume, setMusicVolume] = useState(0.18)
+  const [subtitleEnabled, setSubtitleEnabled] = useState(true)
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -30,12 +37,10 @@ export default function UploadForm({ apiBase, onCreated }) {
           message = data.detail || data.message || message
         } else {
           const text = await res.text()
-          if (text) {
-            message = text
-          }
+          if (text) message = text
         }
       } catch {
-        // mantém a mensagem padrão
+        // mantém mensagem padrão
       }
 
       throw new Error(message)
@@ -45,9 +50,7 @@ export default function UploadForm({ apiBase, onCreated }) {
   }
 
   async function uploadFileInChunks(file, fileType, onFileProgress) {
-    if (!file) {
-      return null
-    }
+    if (!file) return null
 
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE_FALLBACK)
 
@@ -102,7 +105,7 @@ export default function UploadForm({ apiBase, onCreated }) {
 
       function updateGlobalProgress(currentFilePercent) {
         const global = Math.round(
-          ((completedFiles * 100 + currentFilePercent) / totalFiles)
+          (completedFiles * 100 + currentFilePercent) / totalFiles
         )
 
         setUploadProgress(global)
@@ -141,15 +144,20 @@ export default function UploadForm({ apiBase, onCreated }) {
 
       setUploadMessage('Montando arquivos no servidor e criando job...')
 
+      const options = {
+        format,
+        auto_zoom: autoZoom,
+        fade,
+        music_volume: Number(musicVolume),
+        subtitle_enabled: subtitleEnabled,
+      }
+
       const finishForm = new FormData()
 
-      // Compatibilidade com backend atual: envia a primeira cena como video_upload_id
       finishForm.append('video_upload_id', videoUploadIds[0])
-
-      // Novo campo para backend com suporte a múltiplas cenas
       finishForm.append('video_upload_ids', JSON.stringify(videoUploadIds))
-
       finishForm.append('voice_upload_id', voiceUploadId)
+      finishForm.append('options', JSON.stringify(options))
 
       if (subtitleUploadId) {
         finishForm.append('subtitle_upload_id', subtitleUploadId)
@@ -200,10 +208,7 @@ export default function UploadForm({ apiBase, onCreated }) {
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-5"
-      >
+      <form onSubmit={handleSubmit} className="space-y-5">
         <div>
           <label className="block mb-2 text-sm font-semibold text-slate-300">
             Vídeos / Cenas *
@@ -267,6 +272,108 @@ export default function UploadForm({ apiBase, onCreated }) {
           />
         </div>
 
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-200">
+              Configurações do vídeo
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Ajustes que serão enviados para o backend no campo options.
+            </p>
+          </div>
+
+          <div>
+            <label className="block mb-2 text-sm font-semibold text-slate-300">
+              Formato
+            </label>
+
+            <select
+              value={format}
+              onChange={(e) => setFormat(e.target.value)}
+              className="w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 text-sm outline-none focus:border-indigo-500"
+            >
+              <option value="youtube">YouTube 16:9</option>
+              <option value="shorts">Shorts / Reels 9:16</option>
+            </select>
+          </div>
+
+          <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <span>
+              <span className="block text-sm font-semibold text-slate-300">
+                Zoom automático leve
+              </span>
+              <span className="block text-xs text-slate-500">
+                Aplica movimento suave nas cenas.
+              </span>
+            </span>
+
+            <input
+              type="checkbox"
+              checked={autoZoom}
+              onChange={(e) => setAutoZoom(e.target.checked)}
+              className="h-5 w-5"
+            />
+          </label>
+
+          <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <span>
+              <span className="block text-sm font-semibold text-slate-300">
+                Fade entre cenas
+              </span>
+              <span className="block text-xs text-slate-500">
+                Transição suave entre um vídeo e outro.
+              </span>
+            </span>
+
+            <input
+              type="checkbox"
+              checked={fade}
+              onChange={(e) => setFade(e.target.checked)}
+              className="h-5 w-5"
+            />
+          </label>
+
+          <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <span>
+              <span className="block text-sm font-semibold text-slate-300">
+                Legenda ligada
+              </span>
+              <span className="block text-xs text-slate-500">
+                Usa o arquivo SRT/ASS quando enviado.
+              </span>
+            </span>
+
+            <input
+              type="checkbox"
+              checked={subtitleEnabled}
+              onChange={(e) => setSubtitleEnabled(e.target.checked)}
+              className="h-5 w-5"
+            />
+          </label>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <label className="text-sm font-semibold text-slate-300">
+                Volume da música
+              </label>
+
+              <span className="text-xs text-slate-400">
+                {Math.round(Number(musicVolume) * 100)}%
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={musicVolume}
+              onChange={(e) => setMusicVolume(e.target.value)}
+              className="w-full"
+            />
+          </div>
+        </div>
+
         <div>
           <label className="block mb-2 text-sm font-semibold text-slate-300">
             Roteiro / Observações
@@ -317,9 +424,7 @@ export default function UploadForm({ apiBase, onCreated }) {
           disabled={loading}
           className="w-full rounded-2xl bg-indigo-600 px-6 py-4 text-sm font-bold transition hover:bg-indigo-500 disabled:opacity-50"
         >
-          {loading
-            ? 'Enviando em partes...'
-            : 'Gerar Vídeo'}
+          {loading ? 'Enviando em partes...' : 'Gerar Vídeo'}
         </button>
       </form>
     </div>
