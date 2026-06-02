@@ -12,7 +12,6 @@ def safe_path(path: Path) -> str:
 
 def update_job(job_dir: Path, **updates):
     meta_path = job_dir / "job.json"
-
     data = {}
 
     if meta_path.exists():
@@ -26,6 +25,31 @@ def update_job(job_dir: Path, **updates):
     )
 
 
+def get_media_duration(path: Path) -> float:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        safe_path(path),
+    ]
+
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Erro ao obter duração: {result.stderr}")
+
+    return float(result.stdout.strip())
+
+
 def build_ffmpeg_command(
     video_path: Path,
     voice_path: Path,
@@ -35,15 +59,23 @@ def build_ffmpeg_command(
 ) -> list[str]:
 
     settings = get_settings()
+    voice_duration = get_media_duration(voice_path)
 
     cmd = [
         "ffmpeg",
         "-y",
         "-hide_banner",
-    ]
 
-    cmd += ["-i", safe_path(video_path)]
-    cmd += ["-i", safe_path(voice_path)]
+        # O vídeo repete se for menor que a narração
+        "-stream_loop",
+        "-1",
+        "-i",
+        safe_path(video_path),
+
+        # Narração é a duração principal
+        "-i",
+        safe_path(voice_path),
+    ]
 
     has_music = music_path is not None
 
@@ -58,7 +90,8 @@ def build_ffmpeg_command(
     video_filter = (
         "scale=1920:1080:force_original_aspect_ratio=decrease,"
         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
-        "setsar=1"
+        "setsar=1,"
+        "fps=30"
     )
 
     if subtitle_path:
@@ -66,6 +99,7 @@ def build_ffmpeg_command(
             safe_path(subtitle_path)
             .replace("\\", "\\\\")
             .replace(":", "\\:")
+            .replace("'", "\\'")
         )
 
         video_filter += f",subtitles='{subtitle_escaped}'"
@@ -75,23 +109,18 @@ def build_ffmpeg_command(
     ]
 
     if has_music:
-
         filter_parts.append(
             f"[1:a]volume={settings.voice_volume}[voice]"
         )
 
-        # Música mais audível
         filter_parts.append(
-            "[2:a]volume=0.25[music]"
+            "[2:a]volume=0.18[music]"
         )
 
-        # Mixagem melhor para vídeos longos
         filter_parts.append(
             "[voice][music]amix=inputs=2:duration=first:normalize=0[aout]"
         )
-
     else:
-
         filter_parts.append(
             f"[1:a]volume={settings.voice_volume}[aout]"
         )
@@ -108,7 +137,10 @@ def build_ffmpeg_command(
         "-map",
         "[aout]",
 
-        # usa todos os núcleos
+        # Corta tudo exatamente na duração da narração
+        "-t",
+        str(voice_duration),
+
         "-threads",
         "0",
 
@@ -118,7 +150,6 @@ def build_ffmpeg_command(
         "-preset",
         "veryfast",
 
-        # qualidade melhor
         "-crf",
         "21",
 
@@ -169,7 +200,17 @@ def run_ffmpeg(job_dir: Path):
         job_dir,
         status="processing",
         progress=10,
-        message="Preparando FFmpeg",
+        message="Verificando duração da narração",
+    )
+
+    voice_duration = get_media_duration(voice_path)
+
+    update_job(
+        job_dir,
+        status="processing",
+        progress=20,
+        message=f"Narração detectada: {voice_duration:.2f} segundos",
+        voice_duration=voice_duration,
     )
 
     cmd = build_ffmpeg_command(
@@ -184,7 +225,7 @@ def run_ffmpeg(job_dir: Path):
         job_dir,
         status="processing",
         progress=30,
-        message="Renderizando vídeo",
+        message="Renderizando vídeo sincronizado com a narração",
         ffmpeg_command=" ".join(cmd),
     )
 
@@ -198,7 +239,6 @@ def run_ffmpeg(job_dir: Path):
     _, stderr = process.communicate()
 
     if process.returncode != 0:
-
         update_job(
             job_dir,
             status="error",
@@ -216,6 +256,7 @@ def run_ffmpeg(job_dir: Path):
         message="Vídeo gerado com sucesso",
         output_file="output.mp4",
         download_url=f"/download/{meta['job_id']}",
+        final_duration=voice_duration,
     )
 
     return str(output_path)
