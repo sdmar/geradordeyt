@@ -541,6 +541,24 @@ def download(job_id: str):
         filename=f"video-{job_id}.mp4",
     )
 
+@app.get("/thumbnail/{job_id}")
+def thumbnail(job_id: str):
+    read_job(job_id)
+
+    thumbnail_file = settings.output_dir / job_id / "thumbnail.jpg"
+
+    if not thumbnail_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Thumbnail ainda não foi gerada",
+        )
+
+    return FileResponse(
+        thumbnail_file,
+        media_type="image/jpeg",
+        filename=f"thumbnail-{job_id}.jpg",
+    )
+
 
 @app.delete("/job/{job_id}")
 def delete_job(job_id: str):

@@ -59,6 +59,37 @@ def get_media_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
+def generate_thumbnail(video_path: Path, thumbnail_path: Path, duration: float):
+    seek_time = min(3.0, max(duration / 2, 0.5))
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-ss",
+        str(seek_time),
+        "-i",
+        safe_path(video_path),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        safe_path(thumbnail_path),
+    ]
+
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Erro ao gerar thumbnail: {result.stderr}")
+
+    return str(thumbnail_path)
+
+
 def normalize_options(options: Optional[dict]) -> dict:
     if not isinstance(options, dict):
         options = {}
@@ -231,40 +262,28 @@ def build_ffmpeg_command(
     cmd += [
         "-filter_complex",
         filter_complex,
-
         "-map",
         "[vout]",
-
         "-map",
         "[aout]",
-
         "-t",
         str(voice_duration),
-
         "-threads",
         "0",
-
         "-c:v",
         "libx264",
-
         "-preset",
         "veryfast",
-
         "-crf",
         "21",
-
         "-pix_fmt",
         "yuv420p",
-
         "-c:a",
         "aac",
-
         "-b:a",
         "192k",
-
         "-movflags",
         "+faststart",
-
         safe_path(output_path),
     ]
 
@@ -300,6 +319,7 @@ def run_ffmpeg(job_dir: Path):
     )
 
     output_path = job_dir / "output.mp4"
+    thumbnail_path = job_dir / "thumbnail.jpg"
 
     update_job(
         job_dir,
@@ -362,11 +382,35 @@ def run_ffmpeg(job_dir: Path):
 
     update_job(
         job_dir,
+        status="processing",
+        progress=95,
+        message="Gerando thumbnail automática",
+    )
+
+    try:
+        generate_thumbnail(
+            video_path=output_path,
+            thumbnail_path=thumbnail_path,
+            duration=voice_duration,
+        )
+        thumbnail_file = "thumbnail.jpg"
+        thumbnail_url = f"/thumbnail/{meta['job_id']}"
+        thumbnail_error = None
+    except Exception as exc:
+        thumbnail_file = None
+        thumbnail_url = None
+        thumbnail_error = str(exc)
+
+    update_job(
+        job_dir,
         status="completed",
         progress=100,
         message="Vídeo gerado com sucesso",
         output_file="output.mp4",
         download_url=f"/download/{meta['job_id']}",
+        thumbnail_file=thumbnail_file,
+        thumbnail_url=thumbnail_url,
+        thumbnail_error=thumbnail_error,
         final_duration=voice_duration,
         scene_count=len(video_paths),
         scene_duration=scene_duration,
