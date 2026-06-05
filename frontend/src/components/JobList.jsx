@@ -69,17 +69,40 @@ export default function JobList({
                   </p>
                 )}
 
+                {job.thumbnail_file && (
+                  <p className="mt-2 text-xs text-emerald-400">
+                    Thumbnail gerada automaticamente.
+                  </p>
+                )}
+
+                {job.thumbnail_error && (
+                  <p className="mt-2 text-xs text-yellow-400">
+                    Thumbnail não gerada: {job.thumbnail_error}
+                  </p>
+                )}
+
               </div>
 
               <div className="flex flex-col gap-3 md:w-[180px]">
 
                 {job.status === 'completed' && (
-                  <a
-                    href={`${apiBase}/download/${job.job_id}`}
-                    className="rounded-2xl bg-emerald-600 px-5 py-3 text-center text-sm font-bold transition hover:bg-emerald-500"
-                  >
-                    Download
-                  </a>
+                  <>
+                    <a
+                      href={`${apiBase}/download/${job.job_id}`}
+                      className="rounded-2xl bg-emerald-600 px-5 py-3 text-center text-sm font-bold transition hover:bg-emerald-500"
+                    >
+                      Download vídeo
+                    </a>
+
+                    {job.thumbnail_file && (
+                      <a
+                        href={`${apiBase}/thumbnail/${job.job_id}`}
+                        className="rounded-2xl bg-indigo-600 px-5 py-3 text-center text-sm font-bold transition hover:bg-indigo-500"
+                      >
+                        Download thumbnail
+                      </a>
+                    )}
+                  </>
                 )}
 
                 <button
