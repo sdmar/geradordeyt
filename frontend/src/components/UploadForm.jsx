@@ -217,6 +217,7 @@ export default function UploadForm({ apiBase, onCreated }) {
           <input
             id="video-input"
             type="file"
+            accept=".mp4,.mov,.mkv,.webm,.jpg,.jpeg,.png"
             multiple
             onChange={(e) => setVideos(Array.from(e.target.files || []))}
             className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm"
