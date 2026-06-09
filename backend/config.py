@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
 
     allowed_video_ext: set[str] = {"mp4", "mov", "mkv", "webm"}
+    allowed_image_ext: set[str] = {"jpg", "jpeg", "png"}
     allowed_audio_ext: set[str] = {"mp3", "wav", "m4a", "aac"}
     allowed_subtitle_ext: set[str] = {"srt", "ass"}
 
