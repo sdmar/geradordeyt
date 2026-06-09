@@ -237,10 +237,11 @@ def build_video_filter(
     if auto_zoom:
         filters.extend(
             [
-                "scale=8000:-1",
+                f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase",
+                f"crop={width * 2}:{height * 2}",
                 (
                     "zoompan="
-                    "z='min(zoom+0.0008,1.08)':"
+                    "z='min(zoom+0.00045,1.045)':"
                     "d=1:"
                     "x='iw/2-(iw/zoom/2)':"
                     "y='ih/2-(ih/zoom/2)':"
@@ -365,7 +366,7 @@ def build_ffmpeg_command(
         "-t",
         str(voice_duration),
         "-threads",
-        "0",
+        "2",
         "-c:v",
         "libx264",
         "-preset",
