@@ -199,7 +199,7 @@ async def upload_start(
     fake_upload = type("FakeUpload", (), {"filename": filename})()
 
     if file_type == "video":
-        validate_file(fake_upload, settings.allowed_video_ext, "Vídeo")
+        validate_file(fake_upload, settings.allowed_video_ext | settings.allowed_image_ext, "Cena")
     elif file_type in {"voice", "music"}:
         validate_file(fake_upload, settings.allowed_audio_ext, "Áudio")
     elif file_type == "subtitle":
@@ -448,7 +448,7 @@ async def upload(
     music: Optional[UploadFile] = File(None),
     script: Optional[str] = Form(None),
 ):
-    validate_file(video, settings.allowed_video_ext, "Vídeo")
+    validate_file(video, settings.allowed_video_ext | settings.allowed_image_ext, "Cena")
     validate_file(voice, settings.allowed_audio_ext, "Áudio de narração")
 
     if subtitle and subtitle.filename:
