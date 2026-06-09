@@ -1,13 +1,33 @@
 import json
 import subprocess
+import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
 from config import get_settings
 
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".webp"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
+
+
 def safe_path(path: Path) -> str:
     return str(path.resolve())
+
+
+def log_job(job_dir: Path, message: str):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{timestamp} {message}"
+
+    print(line, flush=True)
+
+    try:
+        job_dir.mkdir(parents=True, exist_ok=True)
+        with (job_dir / "worker.log").open("a", encoding="utf-8") as file:
+            file.write(line + "\n")
+    except Exception:
+        pass
 
 
 def escape_subtitle_path(path: Path) -> str:
@@ -20,21 +40,52 @@ def escape_subtitle_path(path: Path) -> str:
 
 
 def update_job(job_dir: Path, **updates):
+    job_dir.mkdir(parents=True, exist_ok=True)
+
     meta_path = job_dir / "job.json"
     data = {}
 
     if meta_path.exists():
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
 
     data.update(updates)
+    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    meta_path.write_text(
+    temp_path = job_dir / "job.json.tmp"
+
+    temp_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
+    temp_path.replace(meta_path)
+
+
+def fail_job(job_dir: Path, stage: str, exc: Exception):
+    error_text = str(exc)
+    traceback_text = traceback.format_exc()
+
+    log_job(job_dir, f"[ERRO][{stage}] {error_text}")
+    log_job(job_dir, traceback_text)
+
+    update_job(
+        job_dir,
+        status="error",
+        progress=100,
+        message=f"Falha no processamento: {stage}",
+        error=error_text[-4000:],
+        traceback=traceback_text[-8000:],
+        error_stage=stage,
+    )
+
 
 def get_media_duration(path: Path) -> float:
+    if not path.exists():
+        raise FileNotFoundError(f"Arquivo não encontrado para ffprobe: {path}")
+
     cmd = [
         "ffprobe",
         "-v",
@@ -51,12 +102,18 @@ def get_media_duration(path: Path) -> float:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        timeout=120,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"Erro ao obter duração: {result.stderr}")
+        raise RuntimeError(f"Erro ao obter duração de {path.name}: {result.stderr}")
 
-    return float(result.stdout.strip())
+    output = result.stdout.strip()
+
+    if not output:
+        raise RuntimeError(f"ffprobe não retornou duração para {path.name}")
+
+    return float(output)
 
 
 def generate_thumbnail(video_path: Path, thumbnail_path: Path, duration: float):
@@ -82,6 +139,7 @@ def generate_thumbnail(video_path: Path, thumbnail_path: Path, duration: float):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        timeout=180,
     )
 
     if result.returncode != 0:
@@ -122,6 +180,42 @@ def get_canvas_size(format_value: str) -> tuple[int, int]:
     return 1920, 1080
 
 
+def is_image_file(path: Path) -> bool:
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_video_file(path: Path) -> bool:
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def validate_input_files(
+    video_paths: list[Path],
+    voice_path: Path,
+    subtitle_path: Optional[Path],
+    music_path: Optional[Path],
+):
+    if not video_paths:
+        raise RuntimeError("Nenhuma cena encontrada para renderizar")
+
+    missing = []
+
+    for path in video_paths:
+        if not path.exists():
+            missing.append(str(path))
+
+    if not voice_path.exists():
+        missing.append(str(voice_path))
+
+    if subtitle_path and not subtitle_path.exists():
+        missing.append(str(subtitle_path))
+
+    if music_path and not music_path.exists():
+        missing.append(str(music_path))
+
+    if missing:
+        raise FileNotFoundError("Arquivos ausentes: " + " | ".join(missing))
+
+
 def build_video_filter(
     input_index: int,
     output_label: str,
@@ -141,11 +235,20 @@ def build_video_filter(
     ]
 
     if auto_zoom:
-        filters.extend([
-            "scale=8000:-1",
-            f"zoompan=z='min(zoom+0.0008,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30",
-            "setsar=1",
-        ])
+        filters.extend(
+            [
+                "scale=8000:-1",
+                (
+                    "zoompan="
+                    "z='min(zoom+0.0008,1.08)':"
+                    "d=1:"
+                    "x='iw/2-(iw/zoom/2)':"
+                    "y='ih/2-(ih/zoom/2)':"
+                    f"s={width}x{height}:fps=30"
+                ),
+                "setsar=1",
+            ]
+        )
 
     if fade and scene_duration > 1.0:
         fade_out_start = max(scene_duration - 0.35, 0)
@@ -159,21 +262,16 @@ def build_ffmpeg_command(
     video_paths: list[Path],
     voice_path: Path,
     output_path: Path,
+    voice_duration: float,
+    scene_duration: float,
     subtitle_path: Optional[Path] = None,
     music_path: Optional[Path] = None,
     options: Optional[dict] = None,
 ) -> list[str]:
-
-    if not video_paths:
-        raise RuntimeError("Nenhuma cena encontrada para renderizar")
-
     settings = get_settings()
     render_options = normalize_options(options)
 
     width, height = get_canvas_size(render_options["format"])
-
-    voice_duration = get_media_duration(voice_path)
-    scene_duration = voice_duration / len(video_paths)
 
     cmd = [
         "ffmpeg",
@@ -182,12 +280,24 @@ def build_ffmpeg_command(
     ]
 
     for video_path in video_paths:
-        cmd += [
-            "-stream_loop",
-            "-1",
-            "-i",
-            safe_path(video_path),
-        ]
+        if is_image_file(video_path):
+            cmd += [
+                "-loop",
+                "1",
+                "-t",
+                str(scene_duration),
+                "-i",
+                safe_path(video_path),
+            ]
+        else:
+            cmd += [
+                "-stream_loop",
+                "-1",
+                "-t",
+                str(scene_duration),
+                "-i",
+                safe_path(video_path),
+            ]
 
     voice_input_index = len(video_paths)
 
@@ -203,6 +313,8 @@ def build_ffmpeg_command(
         cmd += [
             "-stream_loop",
             "-1",
+            "-t",
+            str(voice_duration),
             "-i",
             safe_path(music_path),
         ]
@@ -222,9 +334,7 @@ def build_ffmpeg_command(
             )
         )
 
-    concat_inputs = "".join(
-        f"[v{index}]" for index in range(len(video_paths))
-    )
+    concat_inputs = "".join(f"[v{index}]" for index in range(len(video_paths)))
 
     filter_parts.append(
         f"{concat_inputs}concat=n={len(video_paths)}:v=1:a=0[vcat]"
@@ -232,30 +342,16 @@ def build_ffmpeg_command(
 
     if subtitle_path and render_options["subtitle_enabled"]:
         subtitle_escaped = escape_subtitle_path(subtitle_path)
-        filter_parts.append(
-            f"[vcat]subtitles='{subtitle_escaped}'[vout]"
-        )
+        filter_parts.append(f"[vcat]subtitles='{subtitle_escaped}'[vout]")
     else:
-        filter_parts.append(
-            "[vcat]null[vout]"
-        )
+        filter_parts.append("[vcat]null[vout]")
 
     if has_music:
-        filter_parts.append(
-            f"[{voice_input_index}:a]volume={settings.voice_volume}[voice]"
-        )
-
-        filter_parts.append(
-            f"[{music_input_index}:a]volume={render_options['music_volume']}[music]"
-        )
-
-        filter_parts.append(
-            "[voice][music]amix=inputs=2:duration=first:normalize=0[aout]"
-        )
+        filter_parts.append(f"[{voice_input_index}:a]volume={settings.voice_volume}[voice]")
+        filter_parts.append(f"[{music_input_index}:a]volume={render_options['music_volume']}[music]")
+        filter_parts.append("[voice][music]amix=inputs=2:duration=first:normalize=0[aout]")
     else:
-        filter_parts.append(
-            f"[{voice_input_index}:a]volume={settings.voice_volume}[aout]"
-        )
+        filter_parts.append(f"[{voice_input_index}:a]volume={settings.voice_volume}[aout]")
 
     filter_complex = ";".join(filter_parts)
 
@@ -290,131 +386,250 @@ def build_ffmpeg_command(
     return cmd
 
 
-def run_ffmpeg(job_dir: Path):
-
-    meta = json.loads(
-        (job_dir / "job.json").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    files = meta["files"]
-    options = normalize_options(meta.get("options", {}))
-
-    video_files = files.get("videos") or [files["video"]]
-    video_paths = [job_dir / video_file for video_file in video_files]
-
-    voice_path = job_dir / files["voice"]
-
-    subtitle_path = (
-        job_dir / files["subtitle"]
-        if files.get("subtitle")
-        else None
-    )
-
-    music_path = (
-        job_dir / files["music"]
-        if files.get("music")
-        else None
-    )
-
-    output_path = job_dir / "output.mp4"
-    thumbnail_path = job_dir / "thumbnail.jpg"
-
-    update_job(
-        job_dir,
-        status="processing",
-        progress=10,
-        message="Verificando duração da narração",
-        render_options=options,
-    )
-
-    voice_duration = get_media_duration(voice_path)
-    scene_duration = voice_duration / len(video_paths)
-
-    update_job(
-        job_dir,
-        status="processing",
-        progress=20,
-        message=f"Narração detectada: {voice_duration:.2f} segundos",
-        voice_duration=voice_duration,
-        scene_count=len(video_paths),
-        scene_duration=scene_duration,
-        render_format=options["format"],
-    )
-
-    cmd = build_ffmpeg_command(
-        video_paths=video_paths,
-        voice_path=voice_path,
-        subtitle_path=subtitle_path,
-        music_path=music_path,
-        output_path=output_path,
-        options=options,
-    )
-
-    update_job(
-        job_dir,
-        status="processing",
-        progress=30,
-        message="Renderizando vídeo com configurações personalizadas",
-        ffmpeg_command=" ".join(cmd),
-    )
+def run_command_with_logs(cmd: list[str], job_dir: Path, voice_duration: float):
+    log_job(job_dir, "[FFMPEG] Iniciando processo FFmpeg")
+    log_job(job_dir, "[FFMPEG] Comando montado:")
+    log_job(job_dir, " ".join(cmd))
 
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
     )
 
-    _, stderr = process.communicate()
+    stderr_lines = []
+    last_update = time.time()
+
+    while True:
+        line = process.stderr.readline()
+
+        if line:
+            clean_line = line.strip()
+            stderr_lines.append(clean_line)
+
+            if len(stderr_lines) > 300:
+                stderr_lines = stderr_lines[-300:]
+
+            log_job(job_dir, f"[FFMPEG] {clean_line}")
+
+            now = time.time()
+
+            if now - last_update >= 10:
+                update_job(
+                    job_dir,
+                    status="processing",
+                    progress=50,
+                    message="FFmpeg renderizando vídeo",
+                    last_ffmpeg_log=clean_line[-1000:],
+                )
+                last_update = now
+
+        if process.poll() is not None:
+            break
+
+    stdout, stderr_rest = process.communicate()
+
+    if stderr_rest:
+        for line in stderr_rest.splitlines():
+            clean_line = line.strip()
+            stderr_lines.append(clean_line)
+            log_job(job_dir, f"[FFMPEG] {clean_line}")
+
+    if stdout:
+        log_job(job_dir, f"[FFMPEG][STDOUT] {stdout[-4000:]}")
+
+    full_stderr = "\n".join(stderr_lines)
 
     if process.returncode != 0:
+        raise RuntimeError(full_stderr[-8000:] or "FFmpeg falhou sem stderr")
+
+    log_job(job_dir, "[FFMPEG] Processo finalizado com sucesso")
+
+
+def run_ffmpeg(job_dir: Path):
+    try:
+        log_job(job_dir, "[RUN] Entrou no run_ffmpeg")
+
         update_job(
             job_dir,
-            status="error",
+            status="processing",
+            progress=2,
+            message="Iniciando processamento no worker",
+            error=None,
+            error_stage=None,
+        )
+
+        meta_path = job_dir / "job.json"
+
+        log_job(job_dir, f"[RUN] Lendo job.json: {meta_path}")
+
+        if not meta_path.exists():
+            raise FileNotFoundError(f"job.json não encontrado em {meta_path}")
+
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=5,
+            message="job.json lido com sucesso",
+        )
+
+        files = meta.get("files")
+
+        if not isinstance(files, dict):
+            raise RuntimeError("Campo files ausente ou inválido no job.json")
+
+        options = normalize_options(meta.get("options", {}))
+
+        video_files = files.get("videos") or [files.get("video")]
+        video_files = [item for item in video_files if item]
+
+        video_paths = [job_dir / video_file for video_file in video_files]
+        voice_path = job_dir / files["voice"]
+
+        subtitle_path = (
+            job_dir / files["subtitle"]
+            if files.get("subtitle")
+            else None
+        )
+
+        music_path = (
+            job_dir / files["music"]
+            if files.get("music")
+            else None
+        )
+
+        output_path = job_dir / "output.mp4"
+        thumbnail_path = job_dir / "thumbnail.jpg"
+
+        log_job(job_dir, f"[RUN] Cenas encontradas no job.json: {len(video_paths)}")
+        log_job(job_dir, f"[RUN] Voz: {voice_path}")
+        log_job(job_dir, f"[RUN] Música: {music_path}")
+        log_job(job_dir, f"[RUN] Legenda: {subtitle_path}")
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=8,
+            message="Verificando arquivos do job",
+            render_options=options,
+            scene_count=len(video_paths),
+        )
+
+        validate_input_files(
+            video_paths=video_paths,
+            voice_path=voice_path,
+            subtitle_path=subtitle_path,
+            music_path=music_path,
+        )
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=10,
+            message="Arquivos encontrados. Calculando duração da narração",
+        )
+
+        log_job(job_dir, "[RUN] Calculando duração da voz")
+        voice_duration = get_media_duration(voice_path)
+
+        if voice_duration <= 0:
+            raise RuntimeError("Duração da narração inválida")
+
+        scene_duration = voice_duration / len(video_paths)
+
+        log_job(job_dir, f"[RUN] Duração da voz: {voice_duration:.2f}s")
+        log_job(job_dir, f"[RUN] Duração por cena: {scene_duration:.2f}s")
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=20,
+            message=f"Narração detectada: {voice_duration:.2f} segundos",
+            voice_duration=voice_duration,
+            scene_count=len(video_paths),
+            scene_duration=scene_duration,
+            render_format=options["format"],
+        )
+
+        log_job(job_dir, "[RUN] Montando comando FFmpeg")
+
+        cmd = build_ffmpeg_command(
+            video_paths=video_paths,
+            voice_path=voice_path,
+            subtitle_path=subtitle_path,
+            music_path=music_path,
+            output_path=output_path,
+            voice_duration=voice_duration,
+            scene_duration=scene_duration,
+            options=options,
+        )
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=30,
+            message="Comando FFmpeg montado. Iniciando render",
+            ffmpeg_command=" ".join(cmd),
+        )
+
+        run_command_with_logs(
+            cmd=cmd,
+            job_dir=job_dir,
+            voice_duration=voice_duration,
+        )
+
+        if not output_path.exists():
+            raise RuntimeError("FFmpeg terminou, mas output.mp4 não foi criado")
+
+        update_job(
+            job_dir,
+            status="processing",
+            progress=95,
+            message="Vídeo renderizado. Gerando thumbnail automática",
+        )
+
+        log_job(job_dir, "[RUN] Gerando thumbnail")
+
+        try:
+            generate_thumbnail(
+                video_path=output_path,
+                thumbnail_path=thumbnail_path,
+                duration=voice_duration,
+            )
+            thumbnail_file = "thumbnail.jpg"
+            thumbnail_url = f"/thumbnail/{meta['job_id']}"
+            thumbnail_error = None
+            log_job(job_dir, "[RUN] Thumbnail gerada com sucesso")
+        except Exception as exc:
+            thumbnail_file = None
+            thumbnail_url = None
+            thumbnail_error = str(exc)
+            log_job(job_dir, f"[RUN][THUMBNAIL ERRO] {thumbnail_error}")
+
+        update_job(
+            job_dir,
+            status="completed",
             progress=100,
-            message="Erro ao processar vídeo com FFmpeg",
-            error=stderr[-4000:],
+            message="Vídeo gerado com sucesso",
+            output_file="output.mp4",
+            download_url=f"/download/{meta['job_id']}",
+            thumbnail_file=thumbnail_file,
+            thumbnail_url=thumbnail_url,
+            thumbnail_error=thumbnail_error,
+            final_duration=voice_duration,
+            scene_count=len(video_paths),
+            scene_duration=scene_duration,
+            render_options=options,
         )
 
-        raise RuntimeError(stderr)
+        log_job(job_dir, "[RUN] Job marcado como completed")
 
-    update_job(
-        job_dir,
-        status="processing",
-        progress=95,
-        message="Gerando thumbnail automática",
-    )
+        return str(output_path)
 
-    try:
-        generate_thumbnail(
-            video_path=output_path,
-            thumbnail_path=thumbnail_path,
-            duration=voice_duration,
-        )
-        thumbnail_file = "thumbnail.jpg"
-        thumbnail_url = f"/thumbnail/{meta['job_id']}"
-        thumbnail_error = None
     except Exception as exc:
-        thumbnail_file = None
-        thumbnail_url = None
-        thumbnail_error = str(exc)
-
-    update_job(
-        job_dir,
-        status="completed",
-        progress=100,
-        message="Vídeo gerado com sucesso",
-        output_file="output.mp4",
-        download_url=f"/download/{meta['job_id']}",
-        thumbnail_file=thumbnail_file,
-        thumbnail_url=thumbnail_url,
-        thumbnail_error=thumbnail_error,
-        final_duration=voice_duration,
-        scene_count=len(video_paths),
-        scene_duration=scene_duration,
-        render_options=options,
-    )
-
-    return str(output_path)
+        fail_job(job_dir, "run_ffmpeg", exc)
+        raise
