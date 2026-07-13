@@ -242,11 +242,14 @@ def build_scene_filter(
     ]
 
     if auto_zoom:
+        zoom_frame_count = max(int(round(scene_duration * 30)) - 1, 1)
+        zoom_step = 0.08 / zoom_frame_count
+
         filters.extend(
             [
                 (
                     "zoompan="
-                    "z='min(zoom+0.00045,1.045)':"
+                    f"z='min(1+{zoom_step:.10f}*on,1.08)':"
                     "d=1:"
                     "x='iw/2-(iw/zoom/2)':"
                     "y='ih/2-(ih/zoom/2)':"
@@ -622,6 +625,7 @@ def build_render_signature(
         )
 
     payload = {
+        "renderer_version": "sequential-v2-visible-zoom",
         "sources": sources,
         "scene_durations": [round(value, 6) for value in scene_durations],
         "format": options["format"],
