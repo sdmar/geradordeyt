@@ -168,10 +168,26 @@ def normalize_options(options: Optional[dict]) -> dict:
 
     music_volume = max(0.0, min(music_volume, 1.0))
 
+    try:
+        zoom_intensity = float(options.get("zoom_intensity", 0.08))
+    except (TypeError, ValueError):
+        zoom_intensity = 0.08
+
+    zoom_intensity = max(0.02, min(zoom_intensity, 0.25))
+
+    try:
+        fade_duration = float(options.get("fade_duration", 0.35))
+    except (TypeError, ValueError):
+        fade_duration = 0.35
+
+    fade_duration = max(0.10, min(fade_duration, 1.0))
+
     return {
         "format": format_value,
         "auto_zoom": bool(options.get("auto_zoom", False)),
+        "zoom_intensity": zoom_intensity,
         "fade": bool(options.get("fade", False)),
+        "fade_duration": fade_duration,
         "music_volume": music_volume,
         "subtitle_enabled": bool(options.get("subtitle_enabled", True)),
     }
@@ -233,7 +249,9 @@ def build_scene_filter(
     width: int,
     height: int,
     auto_zoom: bool,
+    zoom_intensity: float,
     fade: bool,
+    fade_duration: float,
 ) -> str:
     filters = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
@@ -243,13 +261,14 @@ def build_scene_filter(
 
     if auto_zoom:
         zoom_frame_count = max(int(round(scene_duration * 30)) - 1, 1)
-        zoom_step = 0.08 / zoom_frame_count
+        zoom_step = zoom_intensity / zoom_frame_count
+        zoom_limit = 1.0 + zoom_intensity
 
         filters.extend(
             [
                 (
                     "zoompan="
-                    f"z='min(1+{zoom_step:.10f}*on,1.08)':"
+                    f"z='min(1+{zoom_step:.10f}*on,{zoom_limit:.4f})':"
                     "d=1:"
                     "x='iw/2-(iw/zoom/2)':"
                     "y='ih/2-(ih/zoom/2)':"
@@ -260,10 +279,13 @@ def build_scene_filter(
     else:
         filters.append("fps=30")
 
-    if fade and scene_duration > 1.0:
-        fade_out_start = max(scene_duration - 0.35, 0)
-        filters.append("fade=t=in:st=0:d=0.25")
-        filters.append(f"fade=t=out:st={fade_out_start}:d=0.35")
+    if fade and scene_duration > 0.20:
+        effective_fade = min(fade_duration, scene_duration / 2)
+        fade_out_start = max(scene_duration - effective_fade, 0)
+        filters.append(f"fade=t=in:st=0:d={effective_fade:.4f}")
+        filters.append(
+            f"fade=t=out:st={fade_out_start:.4f}:d={effective_fade:.4f}"
+        )
 
     filters.extend(["setsar=1", "format=yuv420p"])
 
@@ -292,7 +314,9 @@ def build_scene_command(
     width: int,
     height: int,
     auto_zoom: bool,
+    zoom_intensity: float,
     fade: bool,
+    fade_duration: float,
 ) -> list[str]:
     cmd = ffmpeg_base_command()
 
@@ -311,7 +335,9 @@ def build_scene_command(
             width=width,
             height=height,
             auto_zoom=auto_zoom,
+            zoom_intensity=zoom_intensity,
             fade=fade,
+            fade_duration=fade_duration,
         ),
         "-filter_threads",
         "1",
@@ -625,12 +651,14 @@ def build_render_signature(
         )
 
     payload = {
-        "renderer_version": "sequential-v2-visible-zoom",
+        "renderer_version": "sequential-v3-motion-controls",
         "sources": sources,
         "scene_durations": [round(value, 6) for value in scene_durations],
         "format": options["format"],
         "auto_zoom": options["auto_zoom"],
+        "zoom_intensity": options["zoom_intensity"],
         "fade": options["fade"],
+        "fade_duration": options["fade_duration"],
         "width": width,
         "height": height,
         "fps": 30,
@@ -862,7 +890,9 @@ def run_ffmpeg(job_dir: Path):
                 width=width,
                 height=height,
                 auto_zoom=options["auto_zoom"],
+                zoom_intensity=options["zoom_intensity"],
                 fade=options["fade"],
+                fade_duration=options["fade_duration"],
             )
 
             update_job(job_dir, ffmpeg_command=" ".join(cmd))

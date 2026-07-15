@@ -11,7 +11,9 @@ export default function UploadForm({ apiBase, onCreated }) {
 
   const [format, setFormat] = useState('youtube')
   const [autoZoom, setAutoZoom] = useState(true)
+  const [zoomIntensity, setZoomIntensity] = useState(0.08)
   const [fade, setFade] = useState(true)
+  const [fadeDuration, setFadeDuration] = useState(0.35)
   const [musicVolume, setMusicVolume] = useState(0.18)
   const [subtitleEnabled, setSubtitleEnabled] = useState(true)
 
@@ -147,7 +149,9 @@ export default function UploadForm({ apiBase, onCreated }) {
       const options = {
         format,
         auto_zoom: autoZoom,
+        zoom_intensity: Number(zoomIntensity),
         fade,
+        fade_duration: Number(fadeDuration),
         music_volume: Number(musicVolume),
         subtitle_enabled: subtitleEnabled,
       }
@@ -315,6 +319,43 @@ export default function UploadForm({ apiBase, onCreated }) {
             />
           </label>
 
+          <div
+            className={`rounded-2xl border border-slate-800 bg-slate-950 p-4 ${
+              autoZoom ? '' : 'opacity-50'
+            }`}
+          >
+            <div className="mb-3 flex items-center justify-between gap-4">
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
+                  Intensidade do zoom
+                </label>
+                <p className="mt-1 text-xs text-slate-500">
+                  Define a aproximação máxima durante cada cena.
+                </p>
+              </div>
+
+              <span className="text-xs font-semibold text-slate-300">
+                {Math.round(Number(zoomIntensity) * 100)}%
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min="0.02"
+              max="0.25"
+              step="0.01"
+              value={zoomIntensity}
+              onChange={(e) => setZoomIntensity(e.target.value)}
+              disabled={!autoZoom}
+              className="w-full disabled:cursor-not-allowed"
+            />
+
+            <div className="mt-2 flex justify-between text-[11px] text-slate-600">
+              <span>Suave 2%</span>
+              <span>Forte 25%</span>
+            </div>
+          </div>
+
           <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
             <span>
               <span className="block text-sm font-semibold text-slate-300">
@@ -332,6 +373,43 @@ export default function UploadForm({ apiBase, onCreated }) {
               className="h-5 w-5"
             />
           </label>
+
+          <div
+            className={`rounded-2xl border border-slate-800 bg-slate-950 p-4 ${
+              fade ? '' : 'opacity-50'
+            }`}
+          >
+            <div className="mb-3 flex items-center justify-between gap-4">
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
+                  Duração do fade
+                </label>
+                <p className="mt-1 text-xs text-slate-500">
+                  Controla a velocidade da entrada e saída de cada cena.
+                </p>
+              </div>
+
+              <span className="text-xs font-semibold text-slate-300">
+                {Number(fadeDuration).toFixed(2)}s
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min="0.10"
+              max="1"
+              step="0.05"
+              value={fadeDuration}
+              onChange={(e) => setFadeDuration(e.target.value)}
+              disabled={!fade}
+              className="w-full disabled:cursor-not-allowed"
+            />
+
+            <div className="mt-2 flex justify-between text-[11px] text-slate-600">
+              <span>Rápido 0,10s</span>
+              <span>Lento 1,00s</span>
+            </div>
+          </div>
 
           <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
             <span>
